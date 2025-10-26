@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib');
 
 // Helper: escape parentheses and backslashes
 function pdfLiteralString(s) {
@@ -10,15 +9,14 @@ function pdfLiteralString(s) {
 
 function makePdfWithAttachment(filePath, outPdf) {
   const filename = path.basename(filePath);
-  const data = fs.readFileSync(filePath);
-  const compressed = zlib.deflateSync(data);
+  const data = fs.readFileSync(filePath); // raw, not compressed
 
   let objects = [];
   let namesList = [];
   let nextObjNum;
 
   if (fs.existsSync(outPdf)) {
-    // Try to preserve objects
+    // Preserve existing objects
     const pdfBytes = fs.readFileSync(outPdf);
     const pdfText = pdfBytes.toString('binary');
 
@@ -37,7 +35,7 @@ function makePdfWithAttachment(filePath, outPdf) {
     }
     namesList.push(pdfLiteralString(filename));
   } else {
-    // Create a fresh PDF structure
+    // Start a new PDF
     const obj1 = `1 0 obj
 << /Type /Catalog /Names 2 0 R >>
 endobj
@@ -57,27 +55,30 @@ endobj
   const fileObjNum = nextObjNum;
   const streamObjNum = nextObjNum + 1;
 
+  // Name tree
   const objNames = `${fileObjNum} 0 obj
 << /Names [ ${namesList.join(' ')} ${streamObjNum} 0 R ] >>
 endobj
 `;
   objects.push(objNames);
 
+  // Filespec dictionary
   const objFilespec = `${streamObjNum} 0 obj
 << /Type /Filespec /F ${pdfLiteralString(filename)} /EF << /F ${streamObjNum + 1} 0 R >> >>
 endobj
 `;
   objects.push(objFilespec);
 
+  // Embedded file (no compression)
   const objEmbedded = Buffer.concat([
     Buffer.from(
       `${streamObjNum + 1} 0 obj
-<< /Type /EmbeddedFile /Filter /FlateDecode /Length ${compressed.length} >>
+<< /Type /EmbeddedFile /Length ${data.length} >>
 stream
 `,
       'binary'
     ),
-    compressed,
+    data,
     Buffer.from(`\nendstream\nendobj\n`, 'binary')
   ]);
   objects.push(objEmbedded.toString('binary'));
@@ -109,10 +110,10 @@ ${xrefStart}
 
   outBytes = Buffer.concat([outBytes, Buffer.from(xref + trailer, 'binary')]);
   fs.writeFileSync(outPdf, outBytes);
-  console.log(`Embedded '${filename}' into ${outPdf} (${data.length} bytes).`);
+  console.log(`Embedded '${filename}' (raw, ${data.length} bytes) into ${outPdf}.`);
 }
 
-// CLI handling
+// CLI entry point
 if (require.main === module) {
   const args = process.argv.slice(2);
   if (args.length !== 2) {
